@@ -22,7 +22,7 @@ class local_colab_external extends external_api {
     }
 
     /**
-     * Retorna os usuários matriculados no curso, com nome completo, email, CPF e o primeiro papel encontrado.
+     * Retorna os usuários matriculados no curso, com nome completo, email, CPF, username e o primeiro papel encontrado.
      * Se o parâmetro "role" for informado, apenas os usuários que possuírem esse papel serão retornados.
      *
      * ATENÇÃO: Certifique-se de que somente usuários autorizados (ex: administradores)
@@ -30,7 +30,7 @@ class local_colab_external extends external_api {
      *
      * @param int $courseid
      * @param string $role (opcional) Identificador do papel a filtrar.
-     * @return array Array de usuários com os campos: fullname, email, cpf e role.
+     * @return array Array de usuários com os campos: fullname, email, cpf, username e role.
      * @throws moodle_exception
      */
     public static function colab_course_users($courseid, $role = '') {
@@ -51,8 +51,8 @@ class local_colab_external extends external_api {
         $context = context_course::instance($courseid);
         self::validate_context($context);
 
-        // Consulta SQL para obter os usuários matriculados.
-        $sql = "SELECT u.id, u.firstname, u.lastname, u.email
+        // Consulta SQL para obter os usuários matriculados, incluindo o campo username.
+        $sql = "SELECT u.id, u.firstname, u.lastname, u.email, u.username
                 FROM {user} u
                 JOIN {user_enrolments} ue ON ue.userid = u.id
                 JOIN {enrol} e ON e.id = ue.enrolid
@@ -115,6 +115,7 @@ class local_colab_external extends external_api {
                 'fullname' => fullname($user),
                 'email'    => $user->email,
                 'cpf'      => isset($usercpf[$user->id]) ? $usercpf[$user->id] : '',
+                'username' => $user->username, // Novo campo adicionado
                 'role'     => $userrole,
             );
         }
@@ -134,6 +135,7 @@ class local_colab_external extends external_api {
                     'fullname' => new external_value(PARAM_TEXT, 'Nome completo do usuário'),
                     'email'    => new external_value(PARAM_EMAIL, 'Email do usuário'),
                     'cpf'      => new external_value(PARAM_TEXT, 'CPF do usuário'),
+                    'username' => new external_value(PARAM_TEXT, 'Nome de usuário do usuário'), // Novo campo adicionado
                     'role'     => new external_value(PARAM_TEXT, 'Papel do usuário no curso'),
                 )
             )
