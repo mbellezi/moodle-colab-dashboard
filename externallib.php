@@ -21,7 +21,7 @@ class local_colab_external extends external_api {
     }
 
     /**
-     * Retorna os usuários matriculados no curso, com nome completo, email e papéis.
+     * Retorna os usuários matriculados no curso, com nome completo, email, CPF e o primeiro papel encontrado.
      * Esta versão usa uma consulta SQL personalizada para obter os usuários, 
      * evitando a restrição do get_enrolled_sql() que gera "AND 1 = 2" se o usuário não 
      * tiver as permissões necessárias.
@@ -30,7 +30,7 @@ class local_colab_external extends external_api {
      * possam chamar esta função, pois esta abordagem ignora alguns filtros de segurança.
      *
      * @param int $courseid
-     * @return array Array de usuários com os campos: fullname, email e roles.
+     * @return array Array de usuários com os campos: fullname, email, cpf e role.
      * @throws moodle_exception
      */
     public static function colab_course_users($courseid) {
@@ -78,13 +78,30 @@ class local_colab_external extends external_api {
             $userroles[$ra->userid][] = $ra->shortname;
         }
 
-        // Monta o resultado final com fullname, email e os papéis.
+        // Buscar o valor do campo extra "CPF" para os usuários.
+        $usercpf = array();
+        if ($cpffield = $DB->get_record('user_info_field', array('shortname' => 'CPF'))) {
+            list($useridsql, $userparams) = $DB->get_in_or_equal(array_keys($users));
+            $sqlcpf = "SELECT userid, data FROM {user_info_data} WHERE fieldid = ? AND userid $useridsql";
+            $queryparams = array_merge(array($cpffield->id), $userparams);
+            $cpfdata = $DB->get_records_sql($sqlcpf, $queryparams);
+            foreach ($cpfdata as $data) {
+                $usercpf[$data->userid] = preg_replace('/\D/', '', $data->data);
+            }
+        }
+
+        // Monta o resultado final com fullname, email, CPF e o primeiro papel encontrado.
         $result = array();
         foreach ($users as $user) {
+            $role = '';
+            if (isset($userroles[$user->id]) && !empty($userroles[$user->id])) {
+                $role = reset($userroles[$user->id]); // Obtém o primeiro papel
+            }
             $result[] = array(
                 'fullname' => fullname($user),
                 'email'    => $user->email,
-                'roles'    => isset($userroles[$user->id]) ? $userroles[$user->id] : array(),
+                'cpf'      => isset($usercpf[$user->id]) ? $usercpf[$user->id] : '',
+                'role'     => $role,
             );
         }
 
@@ -102,9 +119,8 @@ class local_colab_external extends external_api {
                 array(
                     'fullname' => new external_value(PARAM_TEXT, 'Nome completo do usuário'),
                     'email'    => new external_value(PARAM_EMAIL, 'Email do usuário'),
-                    'roles'    => new external_multiple_structure(
-                        new external_value(PARAM_TEXT, 'Papel do usuário no curso')
-                    )
+                    'cpf'      => new external_value(PARAM_TEXT, 'CPF do usuário'),
+                    'role'     => new external_value(PARAM_TEXT, 'Primeiro papel do usuário no curso'),
                 )
             )
         );
