@@ -15,40 +15,43 @@ class local_colab_external extends external_api {
     public static function colab_course_users_parameters() {
         return new external_function_parameters(
             array(
-                'courseid' => new external_value(PARAM_INT, 'ID do curso')
+                'courseid' => new external_value(PARAM_INT, 'ID do curso'),
+                'role'     => new external_value(PARAM_TEXT, 'Papél do usuário (opcional)', VALUE_DEFAULT, '')
             )
         );
     }
 
     /**
      * Retorna os usuários matriculados no curso, com nome completo, email, CPF e o primeiro papel encontrado.
-     * Esta versão usa uma consulta SQL personalizada para obter os usuários, 
-     * evitando a restrição do get_enrolled_sql() que gera "AND 1 = 2" se o usuário não 
-     * tiver as permissões necessárias.
+     * Se o parâmetro "role" for informado, apenas os usuários que possuírem esse papel serão retornados.
      *
-     * ATENÇÃO: Certifique-se de que somente usuários autorizados (por exemplo, administradores)
+     * ATENÇÃO: Certifique-se de que somente usuários autorizados (ex: administradores)
      * possam chamar esta função, pois esta abordagem ignora alguns filtros de segurança.
      *
      * @param int $courseid
+     * @param string $role (opcional) Identificador do papel a filtrar.
      * @return array Array de usuários com os campos: fullname, email, cpf e role.
      * @throws moodle_exception
      */
-    public static function colab_course_users($courseid) {
+    public static function colab_course_users($courseid, $role = '') {
         global $DB, $CFG;
         
         // Validação dos parâmetros.
-        $params = self::validate_parameters(self::colab_course_users_parameters(), array('courseid' => $courseid));
-        $courseid = $params['courseid'];
+        $params = self::validate_parameters(
+            self::colab_course_users_parameters(),
+            array('courseid' => $courseid, 'role' => $role)
+        );
+        $courseid   = $params['courseid'];
+        $rolefilter = $params['role'];
 
-        // Verifica se o curso existe; se não, uma exceção é lançada.
+        // Verifica se o curso existe; se não, lança exceção.
         $course = get_course($courseid, MUST_EXIST);
 
-        // Obtém o contexto do curso e valida o contexto.
+        // Obtém e valida o contexto do curso.
         $context = context_course::instance($courseid);
         self::validate_context($context);
 
-        // Usando uma consulta SQL personalizada para buscar os usuários matriculados.
-        // Isso evita que o get_enrolled_sql() insira condições como "AND 1 = 2".
+        // Consulta SQL para obter os usuários matriculados.
         $sql = "SELECT u.id, u.firstname, u.lastname, u.email
                 FROM {user} u
                 JOIN {user_enrolments} ue ON ue.userid = u.id
@@ -90,18 +93,29 @@ class local_colab_external extends external_api {
             }
         }
 
-        // Monta o resultado final com fullname, email, CPF e o primeiro papel encontrado.
+        // Monta o resultado final.
         $result = array();
         foreach ($users as $user) {
-            $role = '';
+            // Verifica os papéis do usuário.
             if (isset($userroles[$user->id]) && !empty($userroles[$user->id])) {
-                $role = reset($userroles[$user->id]); // Obtém o primeiro papel
+                // Se houver filtro de papel, o usuário só será considerado se possuir o papel informado.
+                if ($rolefilter !== '' && !in_array($rolefilter, $userroles[$user->id])) {
+                    continue;
+                }
+                // Define o papel a retornar.
+                $userrole = ($rolefilter !== '') ? $rolefilter : reset($userroles[$user->id]);
+            } else {
+                // Se não houver papel e houver filtro, desconsidera o usuário.
+                if ($rolefilter !== '') {
+                    continue;
+                }
+                $userrole = '';
             }
             $result[] = array(
                 'fullname' => fullname($user),
                 'email'    => $user->email,
                 'cpf'      => isset($usercpf[$user->id]) ? $usercpf[$user->id] : '',
-                'role'     => $role,
+                'role'     => $userrole,
             );
         }
 
@@ -120,9 +134,91 @@ class local_colab_external extends external_api {
                     'fullname' => new external_value(PARAM_TEXT, 'Nome completo do usuário'),
                     'email'    => new external_value(PARAM_EMAIL, 'Email do usuário'),
                     'cpf'      => new external_value(PARAM_TEXT, 'CPF do usuário'),
-                    'role'     => new external_value(PARAM_TEXT, 'Primeiro papel do usuário no curso'),
+                    'role'     => new external_value(PARAM_TEXT, 'Papel do usuário no curso'),
                 )
             )
         );
+    }
+
+    /**
+     * Define os parâmetros de entrada para a função colab_course_users_count.
+     *
+     * @return external_function_parameters
+     */
+    public static function colab_course_users_count_parameters() {
+        return new external_function_parameters(
+            array(
+                'courseid' => new external_value(PARAM_INT, 'ID do curso'),
+                'role'     => new external_value(PARAM_TEXT, 'Papél do usuário (opcional)', VALUE_DEFAULT, '')
+            )
+        );
+    }
+
+    /**
+     * Retorna o número de usuários matriculados no curso, opcionalmente filtrado por papel.
+     *
+     * @param int $courseid
+     * @param string $role (opcional) Identificador do papel a filtrar.
+     * @return int Número de usuários.
+     * @throws moodle_exception
+     */
+    public static function colab_course_users_count($courseid, $role = '') {
+        global $DB;
+        
+        // Validação dos parâmetros.
+        $params = self::validate_parameters(
+            self::colab_course_users_count_parameters(),
+            array('courseid' => $courseid, 'role' => $role)
+        );
+        $courseid   = $params['courseid'];
+        $rolefilter = $params['role'];
+
+        // Verifica se o curso existe; se não, lança exceção.
+        $course = get_course($courseid, MUST_EXIST);
+
+        // Obtém e valida o contexto do curso.
+        $context = context_course::instance($courseid);
+        self::validate_context($context);
+
+        if ($rolefilter !== '') {
+            // Conta usuários matriculados que possuam o papel especificado.
+            $sql = "SELECT COUNT(DISTINCT u.id)
+                    FROM {user} u
+                    JOIN {user_enrolments} ue ON ue.userid = u.id
+                    JOIN {enrol} e ON e.id = ue.enrolid
+                    JOIN {role_assignments} ra ON ra.userid = u.id
+                    JOIN {role} r ON r.id = ra.roleid
+                    WHERE e.courseid = :courseid
+                      AND u.deleted = 0
+                      AND ra.contextid = :contextid
+                      AND r.shortname = :role";
+            $queryparams = array(
+                'courseid'  => $courseid,
+                'contextid' => $context->id,
+                'role'      => $rolefilter
+            );
+            $count = $DB->count_records_sql($sql, $queryparams);
+        } else {
+            // Conta todos os usuários matriculados no curso.
+            $sql = "SELECT COUNT(DISTINCT u.id)
+                    FROM {user} u
+                    JOIN {user_enrolments} ue ON ue.userid = u.id
+                    JOIN {enrol} e ON e.id = ue.enrolid
+                    WHERE e.courseid = :courseid
+                      AND u.deleted = 0";
+            $queryparams = array('courseid' => $courseid);
+            $count = $DB->count_records_sql($sql, $queryparams);
+        }
+
+        return $count;
+    }
+
+    /**
+     * Define a estrutura dos dados de retorno da função colab_course_users_count.
+     *
+     * @return external_value
+     */
+    public static function colab_course_users_count_returns() {
+        return new external_value(PARAM_INT, 'Número de usuários inscritos no curso');
     }
 }
